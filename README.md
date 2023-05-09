@@ -1,6 +1,8 @@
-# About Watcher
+# About FSWatcher
 
-Watcher is a daemon that watches specified files/folders for changes and
+FSWatcher is a fork of from "Watcher" updated to run in Python3.x.
+
+FSWatcher is a daemon that watches specified files/folders for changes and
 fires commands in response to those changes. It is similar to
 [incron](http://incron.aiken.cz), however, configuration uses a simpler
 to read ini file instead of a plain text file. Unlike incron it can also
