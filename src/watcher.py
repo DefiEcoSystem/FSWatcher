@@ -1,3 +1,6 @@
+"""
+Watcher is a daemon that monitors directories for file changes and runs jobs
+"""
 #!/usr/bin/env python
 # Copyright (c) 2010 Greggory Hernandez
 
@@ -31,24 +34,24 @@
 #                    jobs when files or directories change
 ### END INIT INFO
 
-import sys, os, time, atexit
+import sys
+import os
+import time
+import atexit
+import argparse
 from signal import SIGTERM
-import pyinotify
-import sys, os
 import datetime
-import subprocess
-from types import *
 from string import Template
 import configparser
-import argparse
+import pyinotify
 
 class Daemon:
-    """
-    A generic daemon class
+    """A generic daemon class"""
 
-    Usage: subclass the Daemon class and override the run method
-    """
-    def __init__(self, pidfile, stdin='/dev/null', stdout='/dev/null', stderr='/dev/null'):
+    # Usage: subclass the Daemon class and override the run method
+    def __init__(
+        self, pidfile, stdin="/dev/null", stdout="/dev/null", stderr="/dev/null"
+    ):
         self.stdin = stdin
         self.stdout = stdout
         self.stderr = stderr
@@ -56,17 +59,17 @@ class Daemon:
 
     def daemonize(self):
         """
-        do the UNIX double-fork magic, see Stevens' "Advanced Programming in the
+        Do the UNIX double-fork magic, see Stevens' "Advanced Programming in the
         UNIX Environment" for details (ISBN 0201563177)
         http://www.erlenstar.demon.co.uk/unix/faq_2.html#SEC16
         """
         try:
             pid = os.fork()
             if pid > 0:
-                #exit first parent
+                # exit first parent
                 sys.exit(0)
-        except OSError as e:
-            sys.stderr.write("fork #1 failed: %d (%s)\n" % (e.errno, e.strerror))
+        except OSError as os_err:
+            sys.stderr.write(f"fork #1 failed: {os_err.errno} ({os_err.strerror})\n")
             sys.exit(1)
 
         # decouple from parent environment
@@ -80,26 +83,29 @@ class Daemon:
             if pid > 0:
                 # exit from second parent
                 sys.exit(0)
-        except OSError as e:
-            sys.stderr.write("fork #2 failed: %d (%s)\n" % (e.errno, e.strerror))
+        except OSError as os_err:
+            sys.stderr.write(f"fork #2 failed: {os_err.errno} ({os_err.strerror})\n")
             sys.exit(1)
 
-        #redirect standard file descriptors
+        # redirect standard file descriptors
         sys.stdout.flush()
         sys.stderr.flush()
-        si = open(self.stdin, 'r')
-        so = open(self.stdout, 'a+')
-        se = open(self.stderr, 'a+')
-        os.dup2(si.fileno(), sys.stdin.fileno())
-        os.dup2(so.fileno(), sys.stdout.fileno())
-        os.dup2(se.fileno(), sys.stderr.fileno())
+        std_in = open(self.stdin, "r", encoding="utf-8")
+        std_out = open(self.stdout, "a+", encoding="utf-8")
+        std_err = open(self.stderr, "a+", encoding="utf-8")
+        os.dup2(std_in.fileno(), sys.stdin.fileno())
+        os.dup2(std_out.fileno(), sys.stdout.fileno())
+        os.dup2(std_err.fileno(), sys.stderr.fileno())
 
-        #write pid file
+        # write pid file
         atexit.register(self.delpid)
         pid = str(os.getpid())
-        open(self.pidfile, 'w+').write("%s\n" % pid)
+        open(self.pidfile, "w+", encoding="utf-8").write(f"{pid}\n")
 
     def delpid(self):
+        """
+        Delete the pid file
+        """
         os.remove(self.pidfile)
 
     def start(self):
@@ -108,9 +114,9 @@ class Daemon:
         """
         # Check for a pidfile to see if the daemon already runs
         try:
-            pf = open(self.pidfile, 'r')
-            pid = int(pf.read().strip())
-            pf.close()
+            pid_file = open(self.pidfile, "r", encoding="utf-8")
+            pid = int(pid_file.read().strip())
+            pid_file.close()
         except IOError:
             pid = None
 
@@ -129,16 +135,16 @@ class Daemon:
         """
         # get the pid from the pidfile
         try:
-            pf = open(self.pidfile, 'r')
-            pid = int(pf.read().strip())
-            pf.close()
+            pid_file = open(self.pidfile, "r", encoding="utf-8")
+            pid = int(pid_file.read().strip())
+            pid_file.close()
         except IOError:
             pid = None
 
         if not pid:
             message = "pidfile %s does not exist. Daemon not running?\n"
             sys.stderr.write(message % self.pidfile)
-            return # not an error in a restart
+            return  # not an error in a restart
 
         # Try killing the daemon process
         try:
@@ -162,13 +168,16 @@ class Daemon:
         self.start()
 
     def status(self):
+        """
+        Check the status of the daemon
+        """
         try:
-            pf = open(self.pidfile, 'r')
-            pid = int(pf.read().strip())
-            pf.close()
+            pid_file = open(self.pidfile, "r", encoding="utf-8")
+            pid = int(pid_file.read().strip())
+            pid_file.close()
         except IOError:
             pid = None
-            
+
         if pid:
             print("service running")
             sys.exit(0)
@@ -178,217 +187,292 @@ class Daemon:
 
     def run(self):
         """
-        You should override this method when you subclass Daemon. It will be called after the process has been
-        daemonized by start() or restart().
+        This method will override when you subclass Daemon.
+        It will be called after the process has been daemonized by start() or restart().
         """
 
+
 class EventHandler(pyinotify.ProcessEvent):
+    """
+    This class is used to handle events from the inotify kernel subsystem.
+    It is used by the WatchManager class.
+    """
+
     def __init__(self, command):
         pyinotify.ProcessEvent.__init__(self)
         self.command = command
 
-    # from http://stackoverflow.com/questions/35817/how-to-escape-os-system-calls-in-python
-    def shellquote(self,s):
-        s = str(s)
-        return "'" + s.replace("'", "'\\''") + "'"
+    def shellquote(self, string):
+        """
+        Prepares a string for use as a shell command.
+        """
+        # from http://stackoverflow.com/questions/35817/how-to-escape-os-system-calls-in-python
+        string = str(string)
+        return "'" + string.replace("'", "'\\''") + "'"
 
-    def runCommand(self, event):
-        t = Template(self.command)
-        command = t.substitute(watched=self.shellquote(event.path),
-                               filename=self.shellquote(event.pathname),
-                               tflags=self.shellquote(event.maskname),
-                               nflags=self.shellquote(event.mask),
-                               cookie=self.shellquote(event.cookie if hasattr(event, "cookie") else 0))
+    def run_command(self, event):
+        """
+        Runs the command specified in the constructor.
+        """
+        template = Template(self.command)
+        command = template.substitute(
+            watched=self.shellquote(event.path),
+            filename=self.shellquote(event.pathname),
+            tflags=self.shellquote(event.maskname),
+            nflags=self.shellquote(event.mask),
+            cookie=self.shellquote(event.cookie if hasattr(event, "cookie") else 0),
+        )
         try:
             os.system(command)
         except OSError as err:
-            print("Failed to run command '%s' %s" % (command, str(err)))
+            print(f"Failed to run command '{command}' {err}")
 
-    def process_IN_ACCESS(self, event):
+    def process_in_access(self, event):
+        """
+        This method is called on an access event.
+        """
         print("Access: ", event.pathname)
-        self.runCommand(event)
+        self.run_command(event)
 
-    def process_IN_ATTRIB(self, event):
+    def process_in_attrib(self, event):
+        """
+        This method is called on an attrib event.
+        """
         print("Attrib: ", event.pathname)
-        self.runCommand(event)
+        self.run_command(event)
 
-    def process_IN_CLOSE_WRITE(self, event):
+    def process_in_close_write(self, event):
+        """
+        This method is called on a close write event.
+        """
         print("Close write: ", event.pathname)
-        self.runCommand(event)
+        self.run_command(event)
 
-    def process_IN_CLOSE_NOWRITE(self, event):
+    def process_in_close_nowrite(self, event):
+        """
+        This method is called on a close nowrite event.
+        """
         print("Close nowrite: ", event.pathname)
-        self.runCommand(event)
+        self.run_command(event)
 
-    def process_IN_CREATE(self, event):
+    def process_in_create(self, event):
+        """ "
+        This method is called on a create event.
+        """
         print("Creating: ", event.pathname)
-        self.runCommand(event)
+        self.run_command(event)
 
-    def process_IN_DELETE(self, event):
+    def process_in_delete(self, event):
+        """
+        This method is called on a delete event.
+        """
         print("Deleteing: ", event.pathname)
-        self.runCommand(event)
+        self.run_command(event)
 
-    def process_IN_MODIFY(self, event):
+    def process_in_modify(self, event):
+        """
+        This method is called on a modify event.
+        """
         print("Modify: ", event.pathname)
-        self.runCommand(event)
+        self.run_command(event)
 
-    def process_IN_MOVE_SELF(self, event):
+    def process_in_move_self(self, event):
+        """
+        This method is called on a move self event.
+        """
         print("Move self: ", event.pathname)
-        self.runCommand(event)
+        self.run_command(event)
 
-    def process_IN_MOVED_FROM(self, event):
+    def process_in_moved_from(self, event):
+        """
+        This method is called on a moved from event.
+        """
         print("Moved from: ", event.pathname)
-        self.runCommand(event)
+        self.run_command(event)
 
-    def process_IN_MOVED_TO(self, event):
+    def process_in_moved_to(self, event):
+        """
+        This method is called on a moved to event.
+        """
         print("Moved to: ", event.pathname)
-        self.runCommand(event)
+        self.run_command(event)
 
-    def process_IN_OPEN(self, event):
+    def process_in_open(self, event):
+        """
+        This method is called on an open event.
+        """
         print("Opened: ", event.pathname)
-        self.runCommand(event)
+        self.run_command(event)
+
 
 class WatcherDaemon(Daemon):
-
+    """
+    This class is used to daemonize the watcher.
+    """
+    # pylint: disable=redefined-outer-name, super-init-not-called
     def __init__(self, config):
-        self.stdin   = '/dev/null'
-        self.stdout  = config.get('DEFAULT','logfile')
-        self.stderr  = config.get('DEFAULT','logfile')
-        self.pidfile = config.get('DEFAULT','pidfile')
-        self.config  = config
+        self.stdin = "/dev/null"
+        self.stdout = config.get("DEFAULT", "logfile")
+        self.stderr = config.get("DEFAULT", "logfile")
+        self.pidfile = config.get("DEFAULT", "pidfile")
+        self.config = config
 
     def run(self):
-        log('Daemon started')
-        wdds      = []
+        log("Daemon started")
+        wdds = []
         notifiers = []
 
         # read jobs from config file
         for section in self.config.sections():
-            log(section + ": " + self.config.get(section,'watch'))
+            log(section + ": " + self.config.get(section, "watch"))
             # get the basic config info
-            mask      = self._parseMask(self.config.get(section,'events').split(','))
-            folder    = self.config.get(section,'watch')
-            recursive = self.config.getboolean(section,'recursive')
-            autoadd   = self.config.getboolean(section,'autoadd')
-            excluded  = self.config.get(section,'excluded')
-            command   = self.config.get(section,'command')
+            mask = self._parse_mask(self.config.get(section, "events").split(","))
+            folder = self.config.get(section, "watch")
+            recursive = self.config.getboolean(section, "recursive")
+            autoadd = self.config.getboolean(section, "autoadd")
+            excluded = self.config.get(section, "excluded")
+            command = self.config.get(section, "command")
 
             # Exclude directories right away if 'excluded' regexp is set
             # Example https://github.com/seb-m/pyinotify/blob/master/python2/examples/exclude.py
-            if excluded.strip() == '':   # if 'excluded' is empty or whitespaces only
+            if excluded.strip() == "":  # if 'excluded' is empty or whitespaces only
                 excl = None
             else:
-                excl = pyinotify.ExcludeFilter(excluded.split(','))
+                excl = pyinotify.ExcludeFilter(excluded.split(","))
 
-            wm = pyinotify.WatchManager()
+            watch_manager = pyinotify.WatchManager()
             handler = EventHandler(command)
 
-            wdds.append(wm.add_watch(folder, mask, rec=recursive, auto_add=autoadd, exclude_filter=excl))
+            wdds.append(
+                watch_manager.add_watch(
+                    folder, mask, rec=recursive, auto_add=autoadd, exclude_filter=excl
+                )
+            )
 
             # BUT we need a new ThreadNotifier so I can specify a different
             # EventHandler instance for each job
             # this means that each job has its own thread as well (I think)
-            notifiers.append(pyinotify.ThreadedNotifier(wm, handler))
+            notifiers.append(pyinotify.ThreadedNotifier(watch_manager, handler))
 
         # now we need to start ALL the notifiers.
-        # TODO: load test this ... is having a thread for each a problem?
         for notifier in notifiers:
             notifier.start()
 
-
-    def _parseMask(self, masks):
-        ret = False;
+    def _parse_mask(self, masks):
+        ret = False
 
         for mask in masks:
             mask = mask.strip()
 
-            if 'access' == mask:
-                ret = self._addMask(pyinotify.IN_ACCESS, ret)
-            elif 'attribute_change' == mask:
-                ret = self._addMask(pyinotify.IN_ATTRIB, ret)
-            elif 'write_close' == mask:
-                ret = self._addMask(pyinotify.IN_CLOSE_WRITE, ret)
-            elif 'nowrite_close' == mask:
-                ret = self._addMask(pyinotify.IN_CLOSE_NOWRITE, ret)
-            elif 'create' == mask:
-                ret = self._addMask(pyinotify.IN_CREATE, ret)
-            elif 'delete' == mask:
-                ret = self._addMask(pyinotify.IN_DELETE, ret)
-            elif 'self_delete' == mask:
-                ret = self._addMask(pyinotify.IN_DELETE_SELF, ret)
-            elif 'modify' == mask:
-                ret = self._addMask(pyinotify.IN_MODIFY, ret)
-            elif 'self_move' == mask:
-                ret = self._addMask(pyinotify.IN_MOVE_SELF, ret)
-            elif 'move_from' == mask:
-                ret = self._addMask(pyinotify.IN_MOVED_FROM, ret)
-            elif 'move_to' == mask:
-                ret = self._addMask(pyinotify.IN_MOVED_TO, ret)
-            elif 'open' == mask:
-                ret = self._addMask(pyinotify.IN_OPEN, ret)
-            elif 'all' == mask:
-                m = pyinotify.IN_ACCESS | pyinotify.IN_ATTRIB | pyinotify.IN_CLOSE_WRITE | \
-                    pyinotify.IN_CLOSE_NOWRITE | pyinotify.IN_CREATE | pyinotify.IN_DELETE | \
-                    pyinotify.IN_DELETE_SELF | pyinotify.IN_MODIFY | pyinotify.IN_MOVE_SELF | \
-                    pyinotify.IN_MOVED_FROM | pyinotify.IN_MOVED_TO | pyinotify.IN_OPEN
-                ret = self._addMask(m, ret)
-            elif 'move' == mask:
-                ret = self._addMask(pyinotify.IN_MOVED_FROM | pyinotify.IN_MOVED_TO, ret)
-            elif 'close' == mask:
-                ret = self._addMask(pyinotify.IN_CLOSE_WRITE | pyinotify.IN_CLOSE_NOWRITE, ret)
+            if "access" == mask:
+                ret = self._add_mask(pyinotify.IN_ACCESS, ret)
+            elif "attribute_change" == mask:
+                ret = self._add_mask(pyinotify.IN_ATTRIB, ret)
+            elif "write_close" == mask:
+                ret = self._add_mask(pyinotify.IN_CLOSE_WRITE, ret)
+            elif "nowrite_close" == mask:
+                ret = self._add_mask(pyinotify.IN_CLOSE_NOWRITE, ret)
+            elif "create" == mask:
+                ret = self._add_mask(pyinotify.IN_CREATE, ret)
+            elif "delete" == mask:
+                ret = self._add_mask(pyinotify.IN_DELETE, ret)
+            elif "self_delete" == mask:
+                ret = self._add_mask(pyinotify.IN_DELETE_SELF, ret)
+            elif "modify" == mask:
+                ret = self._add_mask(pyinotify.IN_MODIFY, ret)
+            elif "self_move" == mask:
+                ret = self._add_mask(pyinotify.IN_MOVE_SELF, ret)
+            elif "move_from" == mask:
+                ret = self._add_mask(pyinotify.IN_MOVED_FROM, ret)
+            elif "move_to" == mask:
+                ret = self._add_mask(pyinotify.IN_MOVED_TO, ret)
+            elif "open" == mask:
+                ret = self._add_mask(pyinotify.IN_OPEN, ret)
+            elif "all" == mask:
+                all_mask = (
+                    pyinotify.IN_ACCESS
+                    | pyinotify.IN_ATTRIB
+                    | pyinotify.IN_CLOSE_WRITE
+                    | pyinotify.IN_CLOSE_NOWRITE
+                    | pyinotify.IN_CREATE
+                    | pyinotify.IN_DELETE
+                    | pyinotify.IN_DELETE_SELF
+                    | pyinotify.IN_MODIFY
+                    | pyinotify.IN_MOVE_SELF
+                    | pyinotify.IN_MOVED_FROM
+                    | pyinotify.IN_MOVED_TO
+                    | pyinotify.IN_OPEN
+                )
+                ret = self._add_mask(all_mask, ret)
+            elif "move" == mask:
+                ret = self._add_mask(
+                    pyinotify.IN_MOVED_FROM | pyinotify.IN_MOVED_TO, ret
+                )
+            elif "close" == mask:
+                ret = self._add_mask(
+                    pyinotify.IN_CLOSE_WRITE | pyinotify.IN_CLOSE_NOWRITE, ret
+                )
 
         return ret
 
-    def _addMask(self, new_option, current_options):
+    def _add_mask(self, new_option, current_options):
         if not current_options:
             return new_option
         else:
             return current_options | new_option
 
 
-
 def log(msg):
-    sys.stdout.write("%s %s\n" % ( str(datetime.datetime.now()), msg ))
+    """
+    Log a message to stdout
+    """
+    sys.stdout.write(f"{datetime.datetime.now()} {msg}\n")
+
 
 
 if __name__ == "__main__":
     # Parse commandline arguments
     parser = argparse.ArgumentParser(
-                description='A daemon to monitor changes within specified directories and run commands on these changes.',
-             )
-    parser.add_argument('-c','--config',
-                        action='store',
-                        help='Path to the config file (default: %(default)s)')
-    parser.add_argument('command',
-                        action='store',
-                        choices=['start','stop','restart','status','debug'],
-                        help='What to do. Use debug to start in the foreground')
+        description="Monitor changes within specified dirs and run commands on these changes.",
+    )
+    parser.add_argument(
+        "-c",
+        "--config",
+        action="store",
+        help="Path to the config file (default: %(default)s)",
+    )
+    parser.add_argument(
+        "command",
+        action="store",
+        choices=["start", "stop", "restart", "status", "debug"],
+        help="What to do. Use debug to start in the foreground",
+    )
     args = parser.parse_args()
 
     # Parse the config file
     config = configparser.ConfigParser()
-    if(args.config):
+    if args.config:
         confok = config.read(args.config)
     else:
-        confok = config.read(['/etc/watcher.ini', os.path.expanduser('~/.watcher.ini')]);
+        confok = config.read(["/etc/watcher.ini", os.path.expanduser("~/.watcher.ini")])
 
-    if(not confok):
+    if not confok:
         sys.stderr.write("Failed to read config file. Try -c parameter\n")
-        sys.exit(4);
+        sys.exit(4)
 
     # Initialize the daemon
     daemon = WatcherDaemon(config)
 
     # Execute the command
-    if 'start' == args.command:
+    if "start" == args.command:
         daemon.start()
-    elif 'stop' == args.command:
+    elif "stop" == args.command:
         daemon.stop()
-    elif 'restart' == args.command:
+    elif "restart" == args.command:
         daemon.restart()
-    elif 'status' == args.command:
+    elif "status" == args.command:
         daemon.status()
-    elif 'debug' == args.command:
+    elif "debug" == args.command:
         daemon.run()
     else:
         print("Unkown Command")
