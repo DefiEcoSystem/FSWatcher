@@ -1,6 +1,6 @@
 # About FSWatcher
 
-FSWatcher is a fork of from "Watcher" updated to run in Python3.x.
+Fork of from "Watcher" updated to run in Python3.x.
 
 FSWatcher is a daemon that watches specified files/folders for changes and
 fires commands in response to those changes. It is similar to
