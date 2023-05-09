@@ -10,12 +10,13 @@ It's written in Python, making it easier to hack.
 
 ## Requirements
 
-You need Python 2.7 and the [pyinotify](http://github.com/seb-m/pyinotify)
+You need Python 3.x and the [pyinotify](http://github.com/seb-m/pyinotify)
 library.
 
 In Ubuntu (and Debian) you can install these with:
 
-    sudo apt-get install python python-pyinotify
+    sudo apt-get install python3
+    pip3 install pyinotify
 
 ## Configuration
 
@@ -32,7 +33,6 @@ configuration.
 Make sure watcher.py is marked as executable:
 
     chmod +x watcher.py
-
 
 Start the daemon with:
 
